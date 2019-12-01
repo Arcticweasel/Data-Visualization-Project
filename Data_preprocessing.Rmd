@@ -1,0 +1,225 @@
+---
+title: "Data Preprocessing"
+author: "Laura Noetzel"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=FALSE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE,
+               eval = F)
+opts_knit$set(width=75)
+
+```
+
+This markdown html file is about the data wrangling for the project data.
+
+# Transform the Raw Data to Clean Data
+
+At first we need to load the necessary packages.
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(lubridate)
+```
+
+Then we load both csv-files that contain the raw data. I got these raw data sets from kaggle under the following links:
+
+- [California](https://www.kaggle.com/stanford-open-policing/stanford-open-policing-project-california)
+- [Texas](https://www.kaggle.com/stanford-open-policing/stanford-open-policing-project-texas)
+
+If you want to perform the following steps yourself, please download the data from kaggle and rename them to the same names I used.
+
+```{r}
+tx <- read.csv("Texas_raw_data.csv")
+ca <- read.csv("California_raw_data.csv")
+```
+
+We then can take a look at both data frames and make us familiar with the given variables and their format. For a better understanding it is highly recommended to have a look at the **READ-ME-DATA** file.
+
+```{r}
+View(tx)
+View(ca)
+str(tx)
+str(ca)
+summary(ca)
+summary(tx)
+```
+
+We now know which columns are empty (containing only NAs) and which columns that are shared by both data frames have different values (e.g. stop_date) or factor levels (e.g. violation).
+The first column to format is the stop_date column. We format the data type to be a date.
+
+```{r}
+tx$stop_date <- ymd(tx$stop_date)
+ca$stop_date <- ymd(ca$stop_date)
+```
+
+This is important for the next step. As we see, the timespans in which the data was collected differ from each other. The shared interval goes from 2013-01-01 to 2015-12-31. So we create new data frames that only contain stops that are in between those dates.
+
+```{r}
+tx1 <- tx %>% filter(stop_date >= '2013-01-01')
+ca1 <- ca %>% filter(stop_date < '2016-01-01')
+```
+
+For a better clarity we rename the data frames, remove the others and control that they share the same timespan.
+
+```{r}
+rm(ca)
+rm(tx)
+
+california <- ca1
+rm(ca1)
+texas <- tx1
+rm(tx1)
+
+california %>% summarise(Max = max(stop_date), Min = min(stop_date))
+texas %>% summarise(Max = max(stop_date), Min = min(stop_date))
+```
+
+As we saw in the first data exploration, the violation column in texas has way more entries than in california. One reason for the difference is that in texas multiple violations are listed whereas in california only one is displayed. To achieve a better comparability we reduce the violations in texas to the first entry only and assign the remaining levels to one of the four that are stated in california. We lose information from texas here, but in order to compare both data sets this is inevitable.
+
+**ATTENTION**: I chose to only keep the first violation, but you could also choose to keep the worst etc.
+
+```{r}
+summary(ca$violation)
+summary(tx$violation)
+
+texas$violation <- gsub(",.*","",texas$violation)
+
+summary(california$violation)
+summary(texas$violation)
+
+texas$violation <- gsub("Speeding", "Moving violation", texas$violation)
+texas$violation <- gsub("Lights", "Equipment", texas$violation)
+texas$violation <- gsub("Safe movement", "Moving violation", texas$violation)
+texas$violation <- gsub("Stop sign/light", "Moving violation", texas$violation)
+texas$violation <- gsub("Seat belt", "Other", texas$violation)
+texas$violation <- gsub("Paperwork", "Other", texas$violation)
+texas$violation <- gsub("(non-mapped)", "", texas$violation)
+texas$violation <- gsub("[ ()]", "", texas$violation)
+texas$violation <- gsub("Registration/plates", "Equipment", texas$violation)
+texas$violation <- gsub("License", "Other", texas$violation)
+texas$violation <- as_factor(texas$violation)
+
+summary(texas$violation)
+
+```
+
+There are some empty fields in the violation_raw column. To avoid misunderstandings here, we insert NAs in the matching violation column.
+
+```{r}
+texas$violation[texas$violation_raw %in% NA] <- NA
+sum(is.na(texas$violation))
+```
+
+To save some space and don't get distracted we remove empty columns in both data frames.
+
+```{r}
+texas$police_department <- NULL
+texas$driver_age <- NULL
+texas$driver_age_raw <- NULL
+texas$is_arrested <- NULL
+california$police_department <- NULL
+california$driver_age <- NULL
+california$stop_time <- NULL
+california$fine_grained_location <- NULL
+
+```
+
+For the same reason we remove double columns, e.g. the _raw ones.
+
+```{r}
+texas$driver_race_raw <- NULL
+texas$violation_raw <- NULL
+texas$search_type_raw <- NULL
+texas$driver_race_original <- NULL
+texas$location_raw <- NULL
+california$driver_age_raw <- NULL
+california$driver_race_raw <- NULL
+california$violation_raw <- NULL
+california$search_type_raw <- NULL
+california$ethnicity <- NULL
+california$location_raw <- NULL
+```
+
+At last we remove columns that are only in one data frame and not interesting for the further project. You can choose to keep them, but in order to save space and lower the computation time I chose to get rid of them.
+
+```{r}
+texas$fine_grained_location <- NULL
+texas$officer_id <- NULL
+```
+
+I kept a few columns that occur in only one data set (e.g. stop_time, is_arrested), because they can be interesting for further investigation of one data set alone.
+
+Now we save our cleaned data.
+
+```{r}
+write.csv(california, "California_cleaned_data.csv")
+write.csv(texas, "Texas_cleaned_data.csv")
+```
+
+# Combine the Clean Data Sets
+
+To save space and computation time we create a third data frame, that contains the shared columns from both cleaned data frames.
+
+First we load our clean data in two separate data frames.
+
+```{r}
+california <- read.csv("California_cleaned_data.csv")
+texas <- read.csv("Texas_cleaned_data.csv")
+```
+
+To make sure everything is formatted in the right way, we investigate the data frames again and, if necessary, adjust the data types etc.
+
+```{r}
+View(california)
+class(california)
+
+california <- as_tibble(california)
+
+str(california)
+california$stop_date <- ymd(california$stop_date)
+
+summary(california)
+
+View(texas)
+class(texas)
+
+texas <- as_tibble(texas)
+
+str(texas)
+texas$stop_date <- ymd(texas$stop_date)
+
+summary(texas)
+
+```
+
+Now that the data types and classes are adjusted, we can create our third data frame and save it as a .csv-file, too.
+
+```{r}
+ca_help <- california %>% select(-is_arrested)
+tx_help <- texas %>% select(-stop_time, -lat, -lon, -time_of_day, -stop_datetime)
+
+ca_tx <- rbind(ca_help, tx_help)
+
+rm(ca_help)
+rm(tx_help)
+
+write.csv(x = ca_tx, file = "Ca_Tx_joined_data.csv")
+```
+
