@@ -14,8 +14,9 @@ There are a few files in this repository, that are explained here:
 - **READ-ME-DATA**: The Read Me file for the data, in which all columns and specialities of different states are explained. This is provided by the Stanford Open Policing Project.
 - **Data_preprocessing**: The markdown and html file that contains the code and explanations for the steps taken to get from the raw data to the clean data.
 - **Data_Visualization_Project**: The markdown and html file that contains the code and explanations for the visualizations and its findings.
+- **Sample_CA_TX_Joined_Data**: The .csv file that contains a sample of the used data. You can find the stops from july 2014 in here. If you want to reproduce my results, please pay attention to the next paragraph.
 
-As the files that contain the data sets are too large for this repository, they can't be found here. If you want to run this code yourself, you need to download the data first. You can do that on the website from the Stanford Open Policing Project (the link is provided in the next section) or from Kaggle. I chose to download from Kaggle, because there you can find smaller excerpts of the data. 
+As the files that contain the data sets are too large for this repository, you can only find a sample here. If you want to run this code yourself, you need to download the data first. You can do that on the website from the Stanford Open Policing Project (the link is provided in the next section) or from Kaggle. I chose to download from Kaggle, because there you can find smaller excerpts of the data. 
 Please go to the following links for the download and be aware that I renamed the files, so that you do not run in to problems when trying to reproduce my results:
 
 - [California](https://www.kaggle.com/stanford-open-policing/stanford-open-policing-project-california)
