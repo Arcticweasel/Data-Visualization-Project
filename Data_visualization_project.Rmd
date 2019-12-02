@@ -1,0 +1,573 @@
+---
+title: "Data Visualization Project"
+author: "Laura Noetzel"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo= T,
+	             cache=F,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+# Executive Summary
+
+The data that is visualised in this project contains attributes of traffic stops the state patrol made in the US states Texas and California between the years 2013 and 2015. The main goal is to get an overview of the similarities and differences between these two states with regard to some interesting attributes they both share. These two states have been chosen, because they are in some ways very different from each other, e.g. in terms of leading political parties or population density, yet they share some similarities, e.g. the border to their neighboring country mexico.
+
+# Data Background
+
+The data used for this project is provided by [The Stanford Open Policing Project](https://openpolicing.stanford.edu/data/) and can be downloaded there. This project gathers and analyzes traffic stops from all over the USA to investigate and improve the interactions between the police and the public. The files you can download there are very large. For smaller excerpts of the data you can go to Kaggle. The data sets for [California](https://www.kaggle.com/stanford-open-policing/stanford-open-policing-project-california) and [Texas](https://www.kaggle.com/stanford-open-policing/stanford-open-policing-project-texas) that I used here can be downloaded under the provided links.
+
+The data contains information of traffic stops made by the state patrol in Texas and California between 2013 and 2015. Each row in the data represents exactly one traffic stop. For each traffic stop a number of attributes is recorded. 
+
+These attributes are for example: 
+
+- The **date** when the stop took place 
+- The **county** where the driver was stopped 
+- The **gender** and **ethnicity** of the driver
+- The **reason** for the stop (violation)
+- If a **search** was conducted and, if yes, **contraband** was found or not
+- The **outcome** of the stop
+
+What is good to know about the data from texas, is that there is evidence that some officers tried to whitewash their data. They tried to do so by recording the ethnicity of the driver as white, when in fact the driver had a different ethnicity, e.g. hispanic or asian. The people working in the Stanford Open Policing Project tried to correct the data with help of the last US census, but can't be sure that every wrong record has been corrected. For more information on this take a look at the READ-ME-DATA file.
+
+# Data Cleaning
+
+Most of the code used to preprocess the data and get it into the right shape can be found in the Data_preprocessing file. Nevertheless I did a bit of cleaning after that took place. Before we come to that, we need to load the necessary packages and the data.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(gridExtra)
+library(maps)
+library(sf)
+
+ca_tx <- read.csv("Ca_Tx_joined_data.csv")
+
+theme_set(theme_light())
+```
+
+While looking through the data I recognized a spelling mistake in the violation column and corrected that. The second thing we can format here for a better plotting behaviour later, is to turn implicit NAs to explicit ones.
+
+```{r}
+ca_tx$violation <- gsub("Movingviolation", "Moving violation", ca_tx$violation)
+ca_tx$violation <- as_factor(ca_tx$violation)
+ca_tx$violation <- fct_explicit_na(ca_tx$violation)
+```
+
+To get proper visualizations and the base to calculate the right relations, I created a few helping data frames (tibbles) and variables.
+
+At frist I created my own colour scales that contain the colours I want each state to have, so that the code later is more eye-friendly.
+
+```{r}
+myColours <- c("indianred1", "indianred4")
+names(myColours) <- levels(ca_tx$state)
+state_colour_scale <- scale_colour_manual(name = "State", values = myColours)
+state_fill_scale <- scale_fill_manual(name = "State", values = myColours)
+rm(myColours)
+
+myColours <- c("rosybrown", "indianred", "salmon", "lightcoral", "brown")
+names(myColours) <- levels(ca_tx$violation)
+violation_colour_scale <- scale_colour_manual(values = myColours, name = "Violation")
+violation_fill_scale <- scale_fill_manual(values = myColours, name = "Violation")
+rm(myColours)
+
+myColours <- c("indianred", "salmon", "lightcoral")
+names(myColours) <- c("2013", "2014", "2015")
+year_colour_scale <- scale_colour_manual(values = myColours, name = "Year")
+rm(myColours)
+```
+
+Then I created some tibbles that contain the number of stops per state, county and weekday/state, as well as tibbles that contain the number of searches conducted in each state and the total population per state.
+
+```{r}
+state_stops <- tibble(state = c("CA", "TX"),
+              stops = c(12616447, 5758809))
+
+county_stops <- ca_tx %>%
+  select(state, county_name, county_fips) %>%
+  group_by(county_name, county_fips) %>%
+  count() %>%
+  mutate(stops = n)
+county_stops <- as_tibble(county_stops)
+county_stops$n <- NULL
+
+wday_stops <- ca_tx %>%
+  group_by(wday = wday(stop_date, label = T, week_start = 1), state) %>%
+  count() %>%
+  mutate(stops = n)
+wday_stops <- as_tibble(wday_stops)
+wday_stops$n <- NULL
+
+searches <- ca_tx %>% 
+  filter(search_conducted == T) %>%
+  group_by(state) %>%
+  count() %>%
+  mutate(searches = n)
+searches <- as_tibble(searches)
+searches$n <- NULL
+
+mean_population_ca <- (38280000+38630000+38950000)/3
+mean_population_tx <- (26490000+26980000+27490000)/3 
+pop <- tibble(state = c("CA", "TX"),
+                     population = c(38620000, 26986667))
+rm(mean_population_ca)
+rm(mean_population_tx)
+```
+
+To be able to visualize some of the data in maps, I created a **s**imple **f**eature object that contains the geographical data for the counties of Texas and California. I downloaded that data through the maps package and filtered for the two states. Because of an inconsistency between the county map and the county.fips data I needed to rename one county in texas in order to get the right fips-code. After that, I joined the two data frames and formatted the simple feature object as a tibble as well.
+
+```{r}
+sf_map <- st_as_sf(map("county", plot = F, fill = T))
+sf_map <- sf_map %>% filter(str_detect(ID, "california") | str_detect(ID, "texas"))
+sf_map <- sf_map %>% filter(ID != "missouri,texas" & ID != "oklahoma,texas")
+sf_map$ID <- gsub("texas,galveston", "texas,galveston:main", sf_map$ID) 
+
+data("county.fips")
+
+geo_data <- left_join(sf_map, county.fips, by = c("ID" = "polyname"))
+geo_data <- geo_data %>% as_tibble() %>% st_as_sf()
+
+rm(sf_map)
+rm(county.fips)
+```
+
+# Visualizations
+
+## Total Number of Traffic Stops per Year and State
+
+In this first plot I want to gain a first impression of how many drivers have been controlled each year and if there are differences between Texas and California.
+
+I chose to visualize that with a combination of a line-chart and points as we look at some sort of timeline, but are also looking at aggregated data for a certain period of time. This ways both aspects can be recognized.
+
+```{r}
+ca_tx %>%
+  group_by(year = year(stop_date), state = state) %>%
+  count() %>%
+  ggplot(aes(year, n, col = state))+
+  geom_point(stat = "identity", size = 1.5)+
+  geom_line(stat = "identity", size = 0.75)+
+  state_colour_scale +
+  labs(x = "Year", y = "Total Number of Stops", title = "Total Number of Traffic Stops per Year and State")
+```
+
+We can see that there are way more traffic stops happening in California than in Texas. That might be due to the higher population itself and the higher density of population in California.
+
+The second insight we gain is that the number of traffic stops decreases over time. A reason for this might be other priorities for the police officers, but we cannot know that for sure.
+
+## Total Number of Stops per County
+
+To show if there are some counties where more (or less) drivers are controlled I plot the total number of stops in a choropleth map. The development over time is not mentioned here.
+
+I chose the choropleth map, because it allows a quick overview over all counties and states and extreme values can be spotted right away.
+
+```{r}
+ca_tx %>%
+  group_by(county_fips)%>%
+  count()%>%
+  full_join(geo_data, by = c("county_fips" = "fips")) %>%
+  st_as_sf() %>%
+  ggplot(aes(fill = n))+
+  geom_sf()+
+  scale_fill_continuous(low = "antiquewhite2", high = "indianred4", guide = "colorbar", name = "No. of Stops")+
+  theme_void() +
+  labs(title = "Total Number of Traffic Stops per County")
+```
+
+We can see that the county with the highest number of stops over all three years is Los Angeles. That makes sense as it contains the capital city Los Angeles. 
+
+As Texas has less stops than california it is coloured in light colours in all counties.
+
+## Number of Traffic Stops per Year in Relation to State Population
+
+To get rid of the high difference in total numbers between the two states we now look at the relative share in percent of stops to state population.
+
+I chose again a combination of line-chart and points to show the development over the years.
+
+```{r}
+ca_tx %>%
+  group_by(year = year(stop_date), state) %>%
+  count() %>%
+  full_join(pop) %>%
+  mutate(percent = 100*n/population) %>%
+  ggplot(aes(year, percent, col = state)) +
+  geom_point(size = 1.5) +
+  geom_line(size = 0.75) +
+  state_colour_scale +
+  labs(x = "Years", y = "Percent of Population Controlled", title = "Number of Traffic Stops per Year in Relation to State Population")
+```
+
+What surprised me to see is, that even in relation to the overall state population, way more people are controlled in California than in Texas. I expected the percentages to be more similarly.
+
+The second insight we gain is that the percentage of people controlled in each state decreases, too.
+
+## How Much Contraband was Found in Each State
+
+As both states share a border with mexico, I was interested in the amount of contraband, that was found during searches.
+
+To visualize the difference between the states I chose a simple bar-plot.
+
+```{r}
+ca_tx %>%
+  filter(contraband_found == T) %>%
+  group_by(state)%>%
+  count() %>%
+  ggplot(aes(state, n, col = state, fill = state)) +
+  geom_bar(stat = "identity")+
+  state_colour_scale +
+  state_fill_scale +
+  labs(x = "State", y = "Number of Contraband", title = "Contraband Found per State")
+```
+
+I was surprised to see, that much more contraband was found in Texas than in California, because less people were controlled there. But if we take a closer look at the border of each state, it makes sense though, as Texas has a longer border.
+
+## How Much Contraband was Found in Each County
+
+To have a closer look at the locations, in which the smuggled goods were found I chose a choropleth map of the counties of each state.
+
+```{r}
+ca_tx %>%
+  filter(contraband_found == T) %>%
+  group_by(county_fips, state)%>%
+  count() %>%
+  full_join(geo_data, by = c("county_fips" = "fips")) %>%
+  st_as_sf() %>%
+  ggplot(aes(fill = n))+
+  geom_sf()+
+  scale_fill_continuous(low = "antiquewhite2", high = "indianred4", guide = "colorbar", name = "Amount of Contraband Found")+
+  theme_void() +
+  labs(title = "Contraband Found per County")
+```
+
+We can clearly see, that the most smuggled goods have been found around the cities Los Angeles and Houston. I expected to see that most contraband was found in counties alongside the national border. But if we think twice about this huge topic of smuggling illegal objects, such as drugs or weapons, it makes sense. Those things can be sold more easily in the anonymity of cities than in small villages. Furthermore as we have seen before the number of traffic stops is higher in urban areas than in rural ones.
+
+## Contraband Found in Percent of Conducted Searches per State
+
+To know the total amount of found smuggled goods is quite informative, but to get a glimpse at how successful state patrol officers are with searching vehicles, we look at the share of found contraband in conducted searches.
+
+I chose a bar-chart again to show the difference between both states.
+
+```{r}
+ca_tx %>%
+  filter(contraband_found == T) %>%
+  group_by(state) %>%
+  count() %>%
+  full_join(searches, by = "state") %>%
+  mutate(percent = n*100/searches) %>%
+  ggplot(aes(state, percent, col = state, fill = state)) +
+  geom_bar(stat = "identity")+
+  state_colour_scale +
+  state_fill_scale +
+  labs(x = "State", y = "Percent of Contraband Found", title = "Contraband Found in Percent of Conducted Searches per State")
+```
+
+We can see, that the state patrol officers in Texas are more successful when searching vehicles than the state patrol officers in California. The reasons for that cannot be determined from the data we have here, but it may be that the officers in California aren't as good in searching vehilces as the officers in Texas or that less people try to smuggle wares in California. Another possibility could be that smugglers in California are smarter in hiding smuggled goods or in avoiding to be searched. As said before, we can't tell from that small amount of data here.
+
+## Contraband Found in Percent of Stops per County
+
+With the information from the plot before, I was interested in seeing in which counties the share of found smuggled goods in the number of stops is especially high (or low).
+
+I chose a choropleth map again, to get a overview over all counties at once.
+
+```{r}
+ca_tx %>%
+  filter(contraband_found == T) %>%
+  group_by(county_fips, state)%>%
+  count()%>%
+  full_join(county_stops, by = "county_fips") %>%
+  mutate(percent = 100*n/stops) %>%
+  full_join(geo_data, by = c("county_fips" = "fips")) %>%
+  st_as_sf() %>%
+  ggplot(aes(fill = percent))+
+  geom_sf()+
+  scale_fill_continuous(low = "antiquewhite2", high = "indianred4", guide = "colorbar", name = "Share of Contraband Found")+
+  theme_void() +
+  labs(title = "Contraband Found in Percent of Stops per County")
+```
+
+We can see that in the small county of Loving in Texas contraband is found most frequently. I expected it to be the highest in the large cities like Houston etc. There are several possible scenarios why the frequency is that high in Loving. Maybe there is a heavily used Highway or Interstate. To find the real reasons for that, we would need to investigate further on Loving, Texas.
+
+## Difference in the Amount of Contraband Found per State over the Years
+
+Up until now we looked at the overall amounts of smuggled goods over the years. What I am now interested in, is to see whether the amount of found contraband changes over the years we look at.
+
+I chose a combined line-chart with points here, as we look at some sort of time series again, but also look at aggregated data.
+
+```{r}
+ca_tx %>%
+  filter(contraband_found == T) %>%
+  group_by(state, year = year(stop_date))%>%
+  count() %>%
+  ggplot(aes(year, n, col = state)) +
+  geom_line(stat = "identity", size = 0.75) +
+  geom_point(stat = "identity", size = 1.5)+
+  state_colour_scale +
+  labs(x = "Years", y = "Amount of Contraband Found", title = "Development in the Amount of Contraband Found per Sate over the Years")
+```
+
+We can clearly see here, that the amount of found smuggled goods in Texas decreased from 2013 to 2015 by nearly 4000 occurences. In contrast to that development, the amount of found contraband in California stayed nearly the same. The reasons for that are hard to find, as we have not enough information. It could be that the smugglers changed their behaviour or taken routes or that the state patrol made less controls or searches.
+
+## Number of Searches Conducted in each State over the Years
+
+To check the assumption made in the previous plot, that the number of searches decreased over the years in Texas, we now look at the development of the amount of conducted searches per State over the years and compare the development with the development of the amount of contraband found.
+
+```{r}
+p <- ca_tx %>%
+  filter(search_conducted == T) %>%
+  group_by(year = year(stop_date),state) %>%
+  count() %>%
+  ggplot(aes(year, n, col = state)) +
+  geom_point(stat = "identity", size = 1.5) +
+  geom_line(stat = "identity", size = 0.75) +
+  state_colour_scale +
+  labs(x = "Years", y = "Number of Conducted Searches", title = "Development in the Number of Conducted Searches per State over the Years")
+
+p1 <- ca_tx %>%
+  filter(contraband_found == T) %>%
+  group_by(state, year = year(stop_date))%>%
+  count() %>%
+  ggplot(aes(year, n, col = state)) +
+  geom_line(stat = "identity", size = 0.75) +
+  geom_point(stat = "identity", size = 1.5)+
+  state_colour_scale +
+  labs(x = "Years", y = "Amount of Contraband Found", title = "Development in the Amount of Contraband Found per Sate over the Years")
+
+grid.arrange(p, p1, nrow = 2)
+
+```
+
+We can see, that both lines representing Texas show a decreasing development. So it may be that the amount of found smuggled goods decreased because the number of searches decreased. However, we should not be tempted to confuse correlation with causality.
+What is quite eye-catching is, that the amount of found contraband in California is almost the same over all years, whereas the number of conducted searches decreases. If we would look at percentages now, we would see that the frequency of found smuggled goods increased in California, even though the amount of found contraband is almost the same.
+
+We could now control if the decreasing number of searches correlates with the development of the total number of traffic stops. As we saw at the beginning, the number of traffic stops is decreasing over the years, too.
+
+```{r}
+p2 <- ca_tx %>%
+  group_by(year = year(stop_date), state = state) %>%
+  count() %>%
+  ggplot(aes(year, n, col = state))+
+  geom_point(stat = "identity", size = 1.5)+
+  geom_line(stat = "identity", size = 0.75)+
+  state_colour_scale +
+  labs(x = "Years", y = "Total Number of Stops", title = "Development in the Number of Traffic Stops per State over the Years")
+
+grid.arrange(p, p2, nrow = 2)
+```
+
+## Number of Traffic Stops per State and Month
+
+In the plots mentioned before we looked at a development in years. So at this point I'm interested in finding patterns on a monthly base.
+
+As in a few plots before I chose again a combination of a line-chart and points, to mention both, the time series and the aggregated data for a certain timespan.
+
+```{r}
+ca_tx %>%
+  group_by(month = month(stop_date, label = T), state = state) %>%
+  count() %>%
+  ggplot(aes(month, n, col = state, group = state))+
+  geom_line(stat = "identity", size = 0.75)+
+  geom_point(stat = "identity", size = 1.5) +
+  state_colour_scale +
+  labs(x = "Months", y = "Number of Traffic Stops", title = "Development in the Number of Traffic Stops per State over Months")
+```
+
+We can see that the number of traffic stops per month follows a similar pattern in both states. Why the numbers are increasing in certain month cannot be told with certainty. It may be that certain holidays play a role in here. For example in july, both states increase the number of controls. The 4th of july is one of the most important holidays in the USA, as its the day of independence from the British Empire.
+
+## Number of Traffic Stops per Month in Relation to Population
+
+As in the beginning, we will look at the relative share in percent of stops to state population. This time we look at it on a monthly base to check if the high differences remain here, too.
+
+I chose a combination of line-chart and points again, for the same reasons as before.
+
+```{r}
+ca_tx %>%
+  group_by(month = month(stop_date, label = T), state) %>%
+  count() %>%
+  full_join(pop) %>%
+  mutate(percent = 100*n/population) %>%
+  ggplot(aes(month, percent, col = state, group = state)) +
+  geom_point(size = 1.5) +
+  geom_line(size = 0.75) +
+  state_colour_scale +
+  labs(x = "Months", y = "Percent of Population Controlled", title = "Number of Traffic Stops per Month in Relation to State Population")
+```
+
+We see the same pattern as in the plot before. The percentages are lower than in the third plot in the beginning, as we compare monthly stops with the total state population instead of the number of stops per year.
+
+## Number of Violations
+
+Before we investigate monthly or even weekly patterns in the traffic stop data further, we take a look at the reasons for the stops. As we noticed during the preprocessing of the data, there are four categories for the violation. First, we want to look at the overall distribution.
+
+I chose a bar-plot for visualizing this, as that, in my opinion, gives the clearest impression of the discrete variables.
+
+```{r}
+ca_tx %>%
+  group_by(violation) %>%
+  count() %>%
+  ggplot(aes(violation, n, col = violation, fill = violation)) +
+  geom_bar(stat = "identity") +
+  violation_colour_scale +
+  violation_fill_scale +
+  labs(x = "Violation", y = "Occurences per Violation", title = "Number of Occurences per Violation")
+```
+
+We can see that the Moving Violation is by far the most common cause for a traffic stop. A Moving violation is for example speeding or running over a stop sign. The Equipment violation means stops, because a break light does not work etc. DUI is the abbrevation for **D**riving **U**nder **I**nfluence, which means for example drunk driving. The category other contains violations such as not wearing a seatbelt. Unfortunately we do not know in detail what violations have been ordered in which category.
+
+## Distribution of Violations in Percent of Stops per State
+
+To see if there are any specialities within each state, we now look at the violations per state and in relation to the overall number of stops in each.
+
+I chose again the bar chart to visualize these discrete variables.
+
+```{r}
+ca_tx %>%
+  group_by(violation, state) %>%
+  count() %>%
+  full_join(state_stops, by = "state") %>%
+  mutate(percent = n*100/stops) %>%
+  ggplot(aes(violation, percent, col = state, fill = state)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  state_colour_scale +
+  state_fill_scale +
+  labs(x = "Violation", y = "Percentage of Stops", title = "Distribution of Violations in Percent of Stops per State")
+```
+
+For California we see the same pattern in distribution as in the plot before. Most controlled people where stopped because of a Moving violation. In Texas, most people were controlled because of a Moving violation, too. But other as in the plot before, the second most common violation is Equipment.
+
+## Most Common Violation per County in Percent of Stops
+
+To reveal the next layer in data, we switch from state to county layer and look after differences in counties.
+
+To visualize that in a clear way, I chose a choropleth map.
+
+```{r}
+ca_tx %>%
+  group_by(violation, county_fips) %>%
+  count() %>%
+  full_join(county_stops, by = "county_fips") %>%
+  mutate(percent = 100*n/stops) %>%
+  ungroup() %>%
+  group_by(county_fips) %>%
+  top_n(1, percent) %>%
+  full_join(geo_data, by = c("county_fips" = "fips")) %>%
+  st_as_sf() %>%
+  ggplot(aes(fill = violation)) +
+  geom_sf() +
+  theme_void() +
+  violation_fill_scale +
+  labs(title = "Most Common Violation per County in Percent of Stops")
+```
+
+The outcome looks like I expected it to. We clearly can see, that in most counties the most common violation is Moving violation. This fits the patterns discovered in the plots before.
+
+## Number of DUI Stops per Month and State
+
+The violation that I am most interested in is fortunately not the top violation in any county looked at here: DUI. As California is a state known to be very liberal (democratic) and Texas is known to be very conservative (republican) I am interested if there are differences in the number of stops and in other patterns.
+
+To first have a glimpse at the overall number of DUI stops per county and if there is a monthly pattern, I chose to visualize this with a combination of a line-chart and points.
+
+```{r}
+ca_tx %>%
+  filter(violation == "DUI") %>%
+  group_by(month = month(stop_date, label = T), state = state) %>%
+  count() %>%
+  ggplot(aes(month, n, col = state, group = state))+
+  geom_line(stat = "identity", size = 0.75)+
+  geom_point(stat = "identity", size = 1.5) +
+  state_colour_scale +
+  labs(x = "Months", y = "Number of DUI", title = "Total Number of DUI Stops per Month and State")
+```
+
+We see a very clear pattern here for California. In may and in july the number of drunk drivers increases. This may be because of the holidays that take place in these months. For Texas we do not see such a strong pattern. As Texas is a very conservative state there may aren't that many drunk people as in California.
+
+## Number of DUI Stops per County
+
+To see if there are counties where many people drink and drive, we look at a choropleth map.
+
+```{r}
+ca_tx %>%
+  filter(violation == "DUI") %>%
+  group_by(county_fips) %>%
+  count() %>%
+  full_join(geo_data, by = c("county_fips" = "fips")) %>%
+  st_as_sf() %>%
+  ggplot(aes(fill = n)) +
+  geom_sf() +
+  scale_fill_continuous(low = "antiquewhite2", high = "indianred4", guide = "colorbar") +
+  theme_void() +
+  labs(title = "Total Number of DUI Stops per County")
+```
+
+The county that is very different from the others here is Los Angeles. It may be, because in this particular area many (famous) people live (e.g. Hollywood) or visit that want to have a fun time during their vacation.
+
+## Number of DUI Stops per Weekday
+
+Another timespan in which patterns may be observed is the week, especially the weekdays.
+
+To visualize this I chose again a line-chart in combination with points, to show the time series.
+
+```{r}
+ca_tx %>%
+  filter(violation == "DUI") %>%
+  group_by(wday = wday(stop_date, label = T, week_start = 1), state) %>%
+  count() %>%
+  ggplot(aes(wday, n, col = state, group = state)) +
+  geom_point(stat = "identity", size = 1.5) +
+  geom_line(stat = "identity", size = 0.75) +
+  state_colour_scale +
+  labs(x = "Weekday", y = "Number of DUI", title = "Number of DUI Stops per Weekday")
+```
+
+We can know obsereve similar patterns for both states. During the weekend the total number of drunk drivers increases. As most people don't work and go out in the evening on weekends, this is the pattern I expected to see. 
+
+## Number of DUI Stops per Weekday and State in Relation to Stops per Weekday
+
+To gain deeper insights in the share of DUI stops in total stops every weekday, I look at the share DUI stops have in the overall number of stops per Weekday.
+
+```{r}
+ca_tx %>%
+  filter(violation == "DUI") %>%
+  group_by(wday = wday(stop_date, label = T, week_start = 1), state) %>%
+  count() %>%
+  full_join(wday_stops, by = c("wday", "state")) %>%
+  mutate(percent = n*100/stops) %>%
+  ggplot(aes(wday,percent, col = state, group = state)) +
+  geom_point(stat = "identity", size = 1.5) +
+  geom_line(stat = "identity", size = 0.75) +
+  state_colour_scale +
+  labs(x = "Weekday", y = "Percent of DUI", title = "Share of DUI Stops in total Stops per Weekday and State")
+```
+
+We see the same patterns as in the plot before. The only thing that changed, is that the difference between both states decreased for stops during the week. 
+
+## Number of DUI Stops per Week and Year
+
+Looking at the weekdays is, for me, particularly interesing. But what can be interesting, too, is the patterns in weeks over several years. Holidays like Thanksgiving can be determined looking at the weeks more easily.
+
+```{r}
+ca_tx %>%
+  filter(violation == "DUI") %>%
+  group_by(year = as_factor(year(stop_date)),week = week(stop_date)) %>%
+  count() %>%
+  ggplot(aes(week, n, col = year)) +
+  geom_line(stat = "identity") +
+  scale_x_continuous(breaks = 1:52) +
+  year_colour_scale +
+  labs(x = "Weeks", y = "Number of DUI", title = "Number of DUI Stops per Week and Year") +
+  theme_classic()
+```
+
+We can see a way more detailed pattern in weeks, than in months. If we now take a closer look at the peaks we can determine some holidays. Around week 28 is the highest peak. The 4th of july is celebrated then. The next peak after that may be labour day, which is celebrated in september. Around week 48 Thanksgiving is celebrated. Here we can see, that in 2014 the peak is missing. The last peak arises around weeks 51 and 52, when christmas and new years eve are celebrated. There is a peak around week 21, which might be the memorial day. 

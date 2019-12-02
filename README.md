@@ -12,13 +12,15 @@ There are a few files in this repository, that are explained here:
 
 - **README**: The Read Me file to this repository
 - **READ-ME-DATA**: The Read Me file for the data, in which all columns and specialities of different states are explained. This is provided by the Stanford Open Policing Project.
-- **Texas_raw_data**: The original dataset for traffic stops in texas.
-- **Texas_cleaned_data**: The preprocessed dataset for traffic stops in texas.
-- **California_raw_data**: The original dataset for traffic stops in california.
-- **California_cleaned_data**: The preprocessed dataset for traffic stops in california.
-- **Ca_Tx_joined_data**: The dataset that contains the columns from both cleaned dataset that are the same in both datasets.
 - **Data_preprocessing**: The markdown and html file that contains the code and explanations for the steps taken to get from the raw data to the clean data.
-- **Visualizations**: The markdown and html file that contains the code and explanations for the visualizations and its findings.
+- **Data_Visualization_Project**: The markdown and html file that contains the code and explanations for the visualizations and its findings.
+
+As the files that contain the data sets are too large for this repository, they can't be found here. If you want to run this code yourself, you need to download the data first. You can do that on the website from the Stanford Open Policing Project (the link is provided in the next section) or from Kaggle. I chose to download from Kaggle, because there you can find smaller excerpts of the data. 
+Please go to the following links for the download and be aware that I renamed the files, so that you do not run in to problems when trying to reproduce my results:
+
+- [California](https://www.kaggle.com/stanford-open-policing/stanford-open-policing-project-california)
+- [Texas](https://www.kaggle.com/stanford-open-policing/stanford-open-policing-project-texas)
+
 
 ## Stanford Open Policing Project
 
